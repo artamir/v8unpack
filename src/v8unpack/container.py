@@ -41,6 +41,7 @@ class Container:
         self.offset = 0
         self.first_empty_block_offset = None
         self.default_block_size = 0x200
+        self.header_field3 = None  # оригинальное значение field3 из заголовка
         self.files = None
         self.size = 0
         self.toc = []
@@ -58,6 +59,7 @@ class Container:
         self.file = file
         self.first_empty_block_offset = header.first_empty_block_offset
         self.default_block_size = header.default_block_size
+        self.header_field3 = header.count_files  # сохраняем оригинал
         #: Список файлов в контейнере
         self.files = self.read_files(self.file)
 
@@ -191,11 +193,13 @@ class Container:
             files[inner_file.name] = inner_file
         return files
 
-    def build(self, file, src_dir, nested=False, *, offset=0):
+    def build(self, file, src_dir, nested=False, *, offset=0, header_field3=None, toc_block_size=None):
         self.offset = offset
+        self._toc_block_size = toc_block_size  # минимальный размер блока TOC
         self.file = file
         files = sorted(os.listdir(src_dir))
-        self.write_header(len(files))
+        field3 = header_field3 if header_field3 is not None else len(files)
+        self.write_header(field3)
         for file_name in files:
             file_path = os.path.join(src_dir, file_name)
             if os.path.isdir(file_path):
@@ -234,8 +238,10 @@ class Container:
 
             doc = Document(self)
 
+            toc_bs = getattr(self, '_toc_block_size', None) or 0
             if total_blocks == 1:
-                doc.write_block(f, doc_size=doc_size, offset=self.header_size)
+                doc.write_block(f, doc_size=doc_size, offset=self.header_size,
+                                min_block_size=toc_bs)
             else:
                 f.seek(0)
                 next_block_offset = file_size(self.file)
@@ -268,7 +274,7 @@ class Container:
 
         doc = Document(self)
         if inflate:
-            data_doc_offset = doc.compress(fd, self.file)
+            data_doc_offset = doc.compress(fd)
         else:
             data_doc_offset = doc.write(fd, min_block_size=self.default_block_size)
 
