@@ -56,6 +56,8 @@ class CfPatcher:
             c.read(f)
             self._main_field3 = c.header_field3
             c.extract(self.work_dir, deflate=True)
+            # Сохраняем checksums для обновления versions при build
+            self._extract_checksums = c._extract_checksums
         self._extracted = True
 
     def _ensure_extracted(self):
@@ -281,24 +283,11 @@ class CfPatcher:
 
     # ─── Сборка ──────────────────────────────────────────────
 
-    def _invalidate_versions(self):
-        """Удалить файл versions — сбросить кеш хешей объектов.
-
-        cf содержит файл 'versions' с хешами всех объектов.
-        При изменении модулей через write_module хеши устаревают.
-        Без удаления versions платформа 1С при сравнении/объединении
-        не увидит изменений (оптимизация по хешам).
-        LoadCfg работает и без этого, но CompareCfg — нет.
-        """
-        ver_path = os.path.join(self.work_dir, 'versions')
-        if os.path.exists(ver_path):
-            os.remove(ver_path)
-
     def build(self, output_path: str) -> int:
         """Собрать патченный .cf файл.
 
-        Автоматически удаляет файл versions для корректного
-        сравнения/объединения в Конфигураторе 1С.
+        Автоматически обновляет UUID в файле versions для
+        изменённых файлов (через Container.build).
 
         Returns:
             Размер выходного файла в байтах.
@@ -308,11 +297,10 @@ class CfPatcher:
         for d in os.listdir(self.work_dir):
             if d.startswith('_sub_'):
                 shutil.rmtree(os.path.join(self.work_dir, d))
-        # Сбрасываем кеш хешей — иначе CompareCfg не увидит изменений
-        self._invalidate_versions()
 
         with open(output_path, 'w+b') as f:
             c = Container()
+            c._extract_checksums = self._extract_checksums
             c.build(f, self.work_dir, nested=False, header_field3=self._main_field3)
         return os.path.getsize(output_path)
 

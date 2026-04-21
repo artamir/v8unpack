@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from .container_doc import Document
 from .helper import clear_dir, file_size
+from .versions import compute_checksums, invalidate_versions_if_changed
 
 Header = collections.namedtuple('Header', 'first_empty_block_offset, default_block_size, count_files')
 Block = collections.namedtuple('Block', 'doc_size, current_block_size, next_block_offset, data')
@@ -45,6 +46,7 @@ class Container:
         self.files = None
         self.size = 0
         self.toc = []
+        self._extract_checksums = None  # CRC32 файлов при extract (для versions)
 
     def read(self, file, offset=0):
         self.offset = offset
@@ -91,6 +93,11 @@ class Container:
                 progress_bar.update()
         if progress_bar:
             progress_bar.close()
+
+        # Сохраняем контрольные суммы для обновления versions при build
+        if deflate:
+            self._extract_checksums = compute_checksums(dest_dir)
+            self._extract_dir = dest_dir
 
     @staticmethod
     def extract_file(filename, file_obj, path, deflate=False, recursive=False):
@@ -197,6 +204,12 @@ class Container:
         self.offset = offset
         self._toc_block_size = toc_block_size  # минимальный размер блока TOC
         self.file = file
+
+        # Обновляем versions до сборки — если есть сохранённые checksums
+        old_checksums = getattr(self, '_extract_checksums', None)
+        if old_checksums and not nested:
+            invalidate_versions_if_changed(src_dir, old_checksums)
+
         files = sorted(os.listdir(src_dir))
         field3 = header_field3 if header_field3 is not None else len(files)
         self.write_header(field3)
