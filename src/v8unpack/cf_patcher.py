@@ -152,13 +152,20 @@ class CfPatcher:
         if not os.path.exists(text_path):
             shutil.rmtree(sub_dir)
             return ""
-        with open(text_path, 'r', encoding='utf-8-sig') as f:
-            code = f.read()
+        with open(text_path, 'rb') as f:
+            raw = f.read()
+        # Убираем BOM, декодируем как UTF-8
+        if raw[:3] == b'\xef\xbb\xbf':
+            raw = raw[3:]
+        code = raw.decode('utf-8')
         shutil.rmtree(sub_dir)
         return code
 
     def write_module(self, uuid: str, code: str):
         """Записать модуль объекта и пересобрать подконтейнер.
+
+        Сохраняет оригинальный формат переводов строк (CRLF/CRCRLF).
+        Если передан текст с LF — конвертирует в CRLF.
 
         Args:
             uuid: UUID объекта (тот же что для read_module).
@@ -166,8 +173,24 @@ class CfPatcher:
         """
         sub_dir = self._extract_subcontainer(uuid)
         text_path = os.path.join(sub_dir, "text")
-        with open(text_path, 'w', encoding='utf-8-sig') as f:
-            f.write(code)
+
+        # Определяем формат newline из оригинального файла
+        orig_nl = b'\r\n'  # default CRLF
+        if os.path.exists(text_path):
+            with open(text_path, 'rb') as f:
+                orig_raw = f.read(4096)
+            if b'\r\r\n' in orig_raw:
+                orig_nl = b'\r\r\n'
+            elif b'\r\n' in orig_raw:
+                orig_nl = b'\r\n'
+
+        # Нормализуем newlines: сначала к LF, потом к оригинальному формату
+        code = code.replace('\r\r\n', '\n').replace('\r\n', '\n').replace('\r', '\n')
+        raw = code.encode('utf-8')
+        raw = b'\xef\xbb\xbf' + raw.replace(b'\n', orig_nl)
+
+        with open(text_path, 'wb') as f:
+            f.write(raw)
         self._rebuild_subcontainer(uuid, sub_dir)
 
     # ─── Поиск UUID ──────────────────────────────────────────
@@ -258,8 +281,24 @@ class CfPatcher:
 
     # ─── Сборка ──────────────────────────────────────────────
 
+    def _invalidate_versions(self):
+        """Удалить файл versions — сбросить кеш хешей объектов.
+
+        cf содержит файл 'versions' с хешами всех объектов.
+        При изменении модулей через write_module хеши устаревают.
+        Без удаления versions платформа 1С при сравнении/объединении
+        не увидит изменений (оптимизация по хешам).
+        LoadCfg работает и без этого, но CompareCfg — нет.
+        """
+        ver_path = os.path.join(self.work_dir, 'versions')
+        if os.path.exists(ver_path):
+            os.remove(ver_path)
+
     def build(self, output_path: str) -> int:
         """Собрать патченный .cf файл.
+
+        Автоматически удаляет файл versions для корректного
+        сравнения/объединения в Конфигураторе 1С.
 
         Returns:
             Размер выходного файла в байтах.
@@ -269,6 +308,8 @@ class CfPatcher:
         for d in os.listdir(self.work_dir):
             if d.startswith('_sub_'):
                 shutil.rmtree(os.path.join(self.work_dir, d))
+        # Сбрасываем кеш хешей — иначе CompareCfg не увидит изменений
+        self._invalidate_versions()
 
         with open(output_path, 'w+b') as f:
             c = Container()
