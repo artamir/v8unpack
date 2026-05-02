@@ -1,4 +1,6 @@
 import argparse
+import ctypes
+import json
 import os
 import shutil
 import sys
@@ -15,6 +17,85 @@ from .organizer_file_ce import OrganizerFileCE
 from .helper import check_index, load_json
 from .index import update_index
 from .version import __version__
+
+
+STAGE1_TIMESTAMPS_FILE = '.v8unpack_stage1_timestamps.json'
+EPOCH_AS_FILETIME = 116444736000000000
+HUNDREDS_OF_NS = 10000000
+
+
+def _to_windows_filetime(timestamp):
+    return int(timestamp * HUNDREDS_OF_NS + EPOCH_AS_FILETIME)
+
+
+def _set_file_times(path, created, modified):
+    os.utime(path, (modified, modified))
+
+    if os.name != 'nt':
+        return
+
+    handle = ctypes.windll.kernel32.CreateFileW(
+        path,
+        256,
+        1 | 2 | 4,
+        None,
+        3,
+        128,
+        None,
+    )
+    if handle == -1:
+        return
+
+    try:
+        created_time = ctypes.c_ulonglong(_to_windows_filetime(created))
+        modified_time = ctypes.c_ulonglong(_to_windows_filetime(modified))
+        ctypes.windll.kernel32.SetFileTime(
+            handle,
+            ctypes.byref(created_time),
+            None,
+            ctypes.byref(modified_time),
+        )
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _collect_stage1_timestamps(stage1_dir):
+    files = {}
+    for root, _, filenames in os.walk(stage1_dir):
+        for filename in filenames:
+            full_path = os.path.join(root, filename)
+            stat_info = os.stat(full_path)
+            rel_path = os.path.relpath(full_path, stage1_dir).replace('\\', '/')
+            files[rel_path] = {
+                'created': stat_info.st_ctime,
+                'modified': stat_info.st_mtime,
+            }
+    return {'files': files}
+
+
+def _save_stage1_timestamps(dest_dir, stage1_dir):
+    metadata_path = os.path.join(dest_dir, STAGE1_TIMESTAMPS_FILE)
+    with open(metadata_path, 'w', encoding='utf-8') as metadata_file:
+        json.dump(_collect_stage1_timestamps(stage1_dir), metadata_file, ensure_ascii=False, indent=2)
+
+
+def _load_stage1_timestamps(src_dir):
+    metadata_path = os.path.join(src_dir, STAGE1_TIMESTAMPS_FILE)
+    if not os.path.isfile(metadata_path):
+        return None
+    with open(metadata_path, 'r', encoding='utf-8') as metadata_file:
+        return json.load(metadata_file)
+
+
+def _apply_stage1_timestamps(stage1_dir, metadata):
+    if not metadata:
+        return
+
+    for rel_path, timestamp_info in metadata.get('files', {}).items():
+        full_path = os.path.join(stage1_dir, rel_path.replace('/', os.sep))
+        if not os.path.isfile(full_path):
+            continue
+        _set_file_times(full_path, timestamp_info['created'], timestamp_info['modified'])
 
 
 def extract(in_filename: str, out_dir_name: str, *, temp_dir=None, index=None, processes=None, options=None):
@@ -58,6 +139,8 @@ def extract(in_filename: str, out_dir_name: str, *, temp_dir=None, index=None, p
             OrganizerFileCE.unpack(dir_stage3, out_dir_name, pool=pool, index=index, descent=descent)
         else:
             OrganizerFile.unpack(dir_stage3, out_dir_name, pool=pool, index=index)
+
+        _save_stage1_timestamps(out_dir_name, dir_stage1)
 
         end = datetime.now()
         print(f'{"Готово":30}: {end - begin0}')
@@ -104,6 +187,7 @@ def build(in_dir_name: str, out_file_name: str, *, temp_dir=None, index=None,
             OrganizerFileCE.pack(in_dir_name, dir_stage3, pool=pool, index=index, descent=descent)
 
         encode(dir_stage3, dir_stage1, pool=pool, file_name=os.path.basename(out_file_name), options=options)
+        _apply_stage1_timestamps(dir_stage1, _load_stage1_timestamps(in_dir_name))
 
         # json_encode(dir_stage2, dir_stage1, pool=pool)
 

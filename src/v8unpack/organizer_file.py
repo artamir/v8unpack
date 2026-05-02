@@ -9,6 +9,9 @@ from .index import get_dest_path
 from .organizer_form_elem import OrganizerFormElem
 
 
+IGNORED_ROOT_FILES = {'.v8unpack_stage1_timestamps.json'}
+
+
 class OrganizerFile:
 
     @classmethod
@@ -257,6 +260,8 @@ class OrganizerFile:
         entries = cls.list_descent_dir(src_dir, path, descent)
         for entry in entries:
             try:
+                if not path and entry in IGNORED_ROOT_FILES:
+                    continue
                 src_entry_path = os.path.join(src_dir, path, entry)
 
                 if os.path.isdir(os.path.normcase(src_entry_path)):

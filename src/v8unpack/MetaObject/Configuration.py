@@ -133,7 +133,11 @@ class Configuration(MetaObject):
 
         file_list.append('versions')
         file_list.extend(self.file_list)
-        helper.brace_file_write(self.encode_versions(file_list), dest_dir, 'versions')
+        saved_versions = self.header.get('versions')
+        if saved_versions is not None:
+            helper.brace_file_write(saved_versions, dest_dir, 'versions')
+        else:
+            helper.brace_file_write(self.encode_versions(file_list), dest_dir, 'versions')
         return None
 
     def encode_version(self):
