@@ -1,5 +1,6 @@
 import os
 from base64 import b64decode, b64encode
+from uuid import UUID
 
 from .. import helper
 from ..MetaDataObject.core.Simple import Simple
@@ -12,6 +13,24 @@ class CommonPicture(Simple):
         self.ext_code = {}
         self.data = None
         self.raw_data = None
+
+    @classmethod
+    def get_decode_header(cls, header_data):
+        for candidate in header_data[0][1][1:]:
+            if not isinstance(candidate, list) or len(candidate) < 5:
+                continue
+
+            uuid_node = candidate[1] if len(candidate) > 1 else None
+            if not isinstance(uuid_node, list) or len(uuid_node) < 3:
+                continue
+
+            try:
+                UUID(uuid_node[2])
+                return candidate
+            except (TypeError, ValueError):
+                continue
+
+        return super().get_decode_header(header_data)
 
     def decode_object(self, src_dir, file_name, dest_dir, dest_path, version, header_data):
         try:

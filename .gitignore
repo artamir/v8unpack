@@ -1,5 +1,6 @@
 *.egg
 *.py[cod]
+*.bak*
 *.so
 *.egg-info/
 
