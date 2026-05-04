@@ -333,7 +333,7 @@ class JsonContainerDecoder:
                 else:
                     j = len(elem)
                     is_base64 = False
-                    if j > 64:  # base64 нужно переносить
+                    if j > 64 and not elem.startswith('"'):  # base64 нужно переносить; строки в кавычках — не base64
                         try:
                             b64decode(elem)
                             is_base64 = True

@@ -159,14 +159,19 @@ class Decoder:
 
     @classmethod
     def encode_include(cls, params):
-        include_type, (new_src_dir, entry, dest_dir, options, parent_id, parent_container_uuid, include_index) = params
+        include_type, payload = params
+        if len(payload) >= 8:
+            new_src_dir, entry, dest_dir, options, parent_id, parent_container_uuid, include_index, include_order = payload
+        else:
+            new_src_dir, entry, dest_dir, options, parent_id, parent_container_uuid, include_index = payload
+            include_order = None
         try:
             handler = helper.get_class_metadata_object(include_type)
 
             # handler = handler.get_version(options.get('version', '803')[:3])(options=options)
             # handler.title = include_type
             object_task, child_tasks = handler.encode(new_src_dir, entry, dest_dir, parent_id, parent_container_uuid,
-                                                      include_index, options=options)
+                                                      include_index, options=options, include_order=include_order)
             return object_task, child_tasks
         except Exception as err:
             import traceback as _tb; _tb.print_exc()

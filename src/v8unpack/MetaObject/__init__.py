@@ -98,11 +98,13 @@ class MetaObject:
             new_dest_path = os.path.join(dest_path, metadata_type.name)
             external_obj = False
             internal_obj = False
+            include_order_uuids = []
             for j in range(_count_obj):
                 obj_data = _metadata[j + 2]
                 if isinstance(obj_data, str):
                     if j == 0:
                         os.mkdir(os.path.join(dest_dir, new_dest_path))
+                    include_order_uuids.append(obj_data)
 
                     tasks.append([metadata_type.name,
                                   [src_dir, obj_data, dest_dir, new_dest_path, self.container_uuid, self.options]])
@@ -118,12 +120,16 @@ class MetaObject:
                         os.mkdir(os.path.join(dest_dir, new_dest_path))
                     obj_uuid = handler.decode_internal_include(self, obj_data, src_dir, dest_dir, new_dest_path,
                                                                self.options)
+                    if isinstance(obj_uuid, str):
+                        include_order_uuids.append(obj_uuid)
                     if not auto_include:
                         # заменяем данные на идентификатор
                         _metadata[j + 2] = obj_uuid
                     internal_obj = True
             if (external_obj or internal_obj) and auto_include:  # todo dynamic index
                 include[i + 3] = metadata_type.name
+            if include_order_uuids:
+                helper.write_include_order(os.path.join(dest_dir, new_dest_path), include_order_uuids)
 
     @classmethod
     def get_decode_includes(cls, header_data: list) -> list:
@@ -152,7 +158,15 @@ class MetaObject:
                 metadata_type = MetaDataTypes[_metadata]
                 internal_data = include_index.get(_metadata, [])
 
-                include_objects = sorted(internal_data, key=lambda d: d[1])
+                # Keep explicit source order when available; fallback to name for stable output.
+                include_objects = sorted(
+                    internal_data,
+                    key=lambda d: (
+                        0 if len(d) > 3 and d[3] is not None else 1,
+                        d[3] if len(d) > 3 and d[3] is not None else 0,
+                        str(d[1]).lower()
+                    )
+                )
                 include_objects = list(map(lambda d: d[2], include_objects))
 
                 include[i + 3] = [metadata_type.value, str(len(include_objects)), *include_objects]
@@ -210,12 +224,51 @@ class MetaObject:
     @classmethod
     def encode_get_include_obj(cls, src_dir, dest_dir, include, tasks, options, parent_id, parent_container_uuid,
                                include_index):
-        entries = os.listdir(src_dir)
+        entries = [entry for entry in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, entry))]
+        # Default order is deterministic even without sidecar.
+        entries = sorted(entries)
+
+        include_order = helper.read_include_order(src_dir)
+        if include_order:
+            uuid_to_entry = {}
+            for entry in entries:
+                id_path = os.path.join(src_dir, entry, f'{include}.id.json')
+                if not os.path.isfile(id_path):
+                    continue
+                try:
+                    data_id = helper.json_read(os.path.join(src_dir, entry), f'{include}.id.json')
+                    obj_uuid = data_id.get('uuid')
+                    if isinstance(obj_uuid, str):
+                        uuid_to_entry[obj_uuid.lower()] = entry
+                except Exception:
+                    continue
+
+            ordered_entries = []
+            seen = set()
+            for obj_uuid in include_order:
+                entry = uuid_to_entry.get(obj_uuid)
+                if entry and entry not in seen:
+                    ordered_entries.append(entry)
+                    seen.add(entry)
+            for entry in entries:
+                if entry not in seen:
+                    ordered_entries.append(entry)
+            entries = ordered_entries
+
         for entry in entries:
-            if os.path.isdir(os.path.join(src_dir, entry)):
-                new_src_dir = os.path.join(src_dir, entry)
-                tasks.append(
-                    [include, [new_src_dir, entry, dest_dir, options, parent_id, parent_container_uuid, include_index]])
+            new_src_dir = os.path.join(src_dir, entry)
+            tasks.append(
+                [include, [
+                    new_src_dir,
+                    entry,
+                    dest_dir,
+                    options,
+                    parent_id,
+                    parent_container_uuid,
+                    include_index,
+                    len(tasks)
+                ]]
+            )
         # cls.encode_get_include_obj_from_named_folder(src_dir, dest_dir, include, tasks, options, parent_id,
         #                                              include_index)
 

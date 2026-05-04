@@ -13,6 +13,10 @@ from .ext_exception import ExtException
 from .json_container_decoder import JsonContainerDecoder, BigBase64
 
 
+INCLUDE_ORDER_FILE = 'v8unpack_include_order.json'
+LEGACY_INCLUDE_ORDER_FILE = '.v8unpack_include_order.json'
+
+
 def brace_file_read(path, file_name):
     _path = os.path.normpath(os.path.join(path, file_name))
     try:
@@ -62,6 +66,50 @@ def json_write(data, path, file_name):
             json.dump(data, file, ensure_ascii=False, indent=2)
     except Exception as err:
         raise ExtException(message='Ошибка записи', detail=f'{err} в файле ({_path})')
+
+
+def write_include_order(include_dir, uuids):
+    """Persist original include UUID order for deterministic rebuild."""
+    if not uuids:
+        return
+    normalized = []
+    seen = set()
+    for value in uuids:
+        if not isinstance(value, str):
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(value)
+    if not normalized:
+        return
+    makedirs(include_dir, exist_ok=True)
+    with open(os.path.join(include_dir, INCLUDE_ORDER_FILE), 'w', encoding='utf-8') as file:
+        json.dump({'uuids': normalized}, file, ensure_ascii=False, indent=2)
+
+
+def read_include_order(include_dir):
+    """Read include UUID order saved on unpack (if present)."""
+    path = os.path.join(include_dir, INCLUDE_ORDER_FILE)
+    if not os.path.isfile(path):
+        # Backward compatibility for early patch snapshots.
+        path = os.path.join(include_dir, LEGACY_INCLUDE_ORDER_FILE)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+    except Exception:
+        return None
+    uuids = data.get('uuids') if isinstance(data, dict) else None
+    if not isinstance(uuids, list):
+        return None
+    result = []
+    for value in uuids:
+        if isinstance(value, str):
+            result.append(value.lower())
+    return result or None
 
 
 def txt_read(path, file_name, encoding='utf-8-sig'):
@@ -249,7 +297,12 @@ def run_in_pool_encode_include(method, list_args, pool=None, title=None):
                             include_index[parent_id] = {}
                         if obj_type not in include_index[parent_id]:
                             include_index[parent_id][obj_type] = []
-                        include_index[parent_id][obj_type].append((obj_uuid, _object_task['obj_name'], obj_data))
+                        include_index[parent_id][obj_type].append((
+                            obj_uuid,
+                            _object_task['obj_name'],
+                            obj_data,
+                            _object_task.get('obj_order')
+                        ))
                 elif _object_task is None:
                     pass
                 else:

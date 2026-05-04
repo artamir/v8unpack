@@ -114,7 +114,8 @@ class MetaDataObject(MetaObject):
         return header
 
     @classmethod
-    def encode(cls, src_dir, file_name, dest_dir, parent_id, parent_container_uuid, include_index, options):
+    def encode(cls, src_dir, file_name, dest_dir, parent_id, parent_container_uuid, include_index, options,
+               include_order=None):
         # src_file_name = self.get_encode_file_name(file_name)
         src_file_name = cls.__name__
         try:
@@ -164,7 +165,8 @@ class MetaDataObject(MetaObject):
                 obj_type=self.get_obj_name(),
                 obj_name=self.name,
                 obj_uuid=self.uuid,
-                obj_data=self.get_internal_data()
+                obj_data=self.get_internal_data(),
+                obj_order=include_order
             ), None
         except Exception as err:
             raise ExtException(
